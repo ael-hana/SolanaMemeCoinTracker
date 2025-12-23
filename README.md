@@ -14,38 +14,55 @@ Dashboard en temps réel pour tracker les meme coins Solana avec des widgets con
 ## 🏗️ Architecture (Performance-First)
 
 ```
-┌──────────────────────────────────────────────┐
-│ Main Thread (UI)                            │
-│                                              │
-│  ┌────────────┐      ┌──────────────────┐  │
-│  │  Dashboard │─────▶│ Zustand Stores   │  │
-│  │ (React 19) │◀─────│ - Dashboard      │  │
-│  └────────────┘      │ - WebSocket Data │  │
-│                      └──────────────────┘  │
-│                              │              │
-│                              │ postMessage  │
-│                              ▼              │
-│  ┌──────────────────────────────────────┐  │
-│  │ Web Worker                           │  │
-│  │                                      │  │
-│  │  ┌───────────────────────────────┐  │  │
-│  │  │ Single WebSocket Connection    │  │  │
-│  │  │ (Mobula API)                   │  │  │
-│  │  │ - Gère toutes les souscriptions│  │  │
-│  │  │ - Reconnexion automatique      │  │  │
-│  │  │ - Broadcast data → main thread │  │  │
-│  │  └───────────────────────────────┘  │  │
-│  └──────────────────────────────────────┘  │
-└──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                    MULTI-TAB SUPPORT                       │
+│  Tab 1            Tab 2            Tab 3                   │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐            │
+│  │Dashboard │    │Dashboard │    │Dashboard │            │
+│  │(React 19)│    │(React 19)│    │(React 19)│            │
+│  └────┬─────┘    └────┬─────┘    └────┬─────┘            │
+│       │               │               │                    │
+│       │ MessagePort   │ MessagePort   │ MessagePort       │
+│       └───────────────┼───────────────┘                    │
+│                       ▼                                     │
+│  ┌──────────────────────────────────────────────────────┐ │
+│  │           SharedWorker (1 instance)                   │ │
+│  │                                                        │ │
+│  │  ┌─────────────────────────────────────────────────┐ │ │
+│  │  │ Single WebSocket Connection (Mobula API)        │ │ │
+│  │  │ • Auto-subscribe to SOL for price calculations  │ │ │
+│  │  │ • Token subscription deduplication              │ │ │
+│  │  │ • Closes when 0 widgets (saves resources)       │ │ │
+│  │  │ • Auto-reconnects when widget added             │ │ │
+│  │  │ • Broadcasts data to all tabs                   │ │ │
+│  │  └─────────────────────────────────────────────────┘ │ │
+│  └──────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ### Pourquoi cette architecture?
 
-1. **Web Worker** = WebSocket sur thread séparé → UI reste fluide
-2. **Un seul WebSocket** = Optimal pour les ressources réseau
-3. **Zustand** = State management minimal → Pas de re-renders inutiles
-4. **React.memo** sur widgets → Re-render uniquement quand leurs data changent
-5. **URL State** = Dashboard partageable sans backend
+1. **SharedWorker** = 1 WebSocket partagé entre TOUS les onglets → Économie massive de bande passante
+2. **Automatic SOL subscription** = Prix en SOL calculés automatiquement pour tous les tokens
+3. **Smart connection management** = Ferme la connexion si 0 widgets → 0 ressources gaspillées
+4. **Token deduplication** = Si 2 onglets trackent le même token → 1 seule souscription
+5. **Zustand** = State management minimal → Pas de re-renders inutiles
+6. **React.memo** sur widgets → Re-render uniquement quand leurs data changent
+7. **URL State** = Dashboard partageable sans backend
+
+### Exemple d'optimisation
+
+```
+Sans SharedWorker:
+- Tab 1 tracking WIF → 1 WebSocket
+- Tab 2 tracking WIF → 1 WebSocket
+- Tab 3 tracking WIF → 1 WebSocket
+Total: 3 WebSockets, 3x la bande passante
+
+Avec SharedWorker:
+- Tabs 1, 2, 3 tracking WIF → 1 WebSocket partagé
+Total: 1 WebSocket, économie de 66% ! 🔥
+```
 
 ## 🚀 Installation
 
@@ -95,7 +112,7 @@ src/
 │   ├── useDashboardStore.ts       # État du dashboard (Zustand)
 │   └── useWebSocketStore.ts       # Données WebSocket (Zustand)
 ├── workers/
-│   └── websocket.worker.ts        # Worker WebSocket
+│   └── websocket.shared-worker.ts # SharedWorker multi-onglets
 ├── utils/
 │   └── urlState.ts                # Sync état ↔ URL
 └── types/
@@ -133,7 +150,7 @@ src/
 - **Zustand 5.0**: State management léger
 - **react-grid-layout**: Drag & drop
 - **rolldown-vite 7.2.5**: Build ultra-rapide
-- **Web Workers**: WebSocket sur thread séparé
+- **SharedWorker**: WebSocket partagé multi-onglets
 
 ## 📝 Scripts
 
@@ -150,11 +167,14 @@ Build automatique avec `npm run build`, output dans `dist/`
 
 ## 🔥 Optimisations Implémentées
 
-1. **WebSocket Worker**: Thread séparé pour I/O réseau
-2. **React.memo**: Widgets ne re-render que si nécessaire
-3. **Zustand selectors**: Souscriptions granulaires
-4. **Debounced URL updates**: Évite spam de l'historique
-5. **rolldown-vite**: Build 3-5x plus rapide
+1. **SharedWorker**: 1 WebSocket partagé entre tous les onglets → 66-90% de bande passante économisée
+2. **Auto SOL subscription**: Prix en SOL calculés automatiquement sans souscription manuelle
+3. **Smart connection management**: Ferme la connexion WebSocket si 0 widgets actifs
+4. **Token deduplication**: Plusieurs widgets sur même token = 1 seule souscription API
+5. **React.memo**: Widgets ne re-render que si nécessaire
+6. **Zustand selectors**: Souscriptions granulaires
+7. **Debounced URL updates**: Évite spam de l'historique
+8. **rolldown-vite**: Build 3-5x plus rapide
 
 ## 🎯 Prochaines étapes
 
